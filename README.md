@@ -16,3 +16,5 @@ By integrating YOLO-based object detection with Groq-powered AI inference, VIAS 
 
 ### Our Moto
 > From live vision to actionable guidance — powered by real-time AI.
+
+### Used AI for Dimensions
