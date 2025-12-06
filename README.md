@@ -1,4 +1,4 @@
-#VIDAS
+# VIDAS
 ## Description
 The B2 Bombers are making VIDAS Visualy imapaired and dyslexic assistance simulator.We are doing an AI powered accessibilltiy website thta suports visually impared and dyslexic users through object detction,navigation assistance,dyslexic freindly reading tools,customizable fonts,background filters, and text to speech-making reading and naviagtion easier for everyone.
 Features
