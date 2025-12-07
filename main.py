@@ -1,208 +1,151 @@
-#Modules and dependencies importing
-
-import cv2
-import numpy as np
 import base64
 import time
-import queue
 import threading
+import queue
+import cv2
+import numpy as np
 
-from flask import Flask, send_file
+from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_sock import Sock
 from ultralytics import YOLO
 import pyttsx3
 
-# Initiation of Flask app and YOLO model
-app = Flask(__name__)
+from simplify import simplify_text, highlight_difficult_words
+
+# =====================
+# FLASK
+# =====================
+app = Flask(__name__, static_folder="static", template_folder="templates")
 sock = Sock(app)
 
-
+# =====================
+# YOLO
+# =====================
 model = YOLO("yolov8n.pt")
+try:
+    model.to("cuda")
+except:
+    print("⚠️ CPU mode")
+
 model.fuse()
 
-tts_queue = queue.Queue(maxsize=3)
+# =====================
+# OFFLINE TTS (pyttsx3)
+# =====================
+tts_q = queue.Queue(maxsize=10)
+
 engine = pyttsx3.init()
 engine.setProperty("rate", 145)
+engine.setProperty("volume", 1.0)
 
 def tts_worker():
     while True:
-        text = tts_queue.get()
+        text = tts_q.get()
         if text is None:
             break
-        try:
-            engine.say(text)
-            engine.runAndWait()
-        except:
-            pass
+        engine.say(text)
+        engine.runAndWait()
 
 threading.Thread(target=tts_worker, daemon=True).start()
-#Known widths and focal length for distance approximation
 
-FOCAL_LENGTH = 650
-KNOWN_WIDTHS = {
-    "person": 50,
-    "bicycle": 60,
-    "car": 180,
-    "motorcycle": 80,
-    "airplane": 3000,
-    "bus": 250,
-    "train": 300,
-    "truck": 250,
-    "boat": 200,
-    "traffic light": 30,
-    "fire hydrant": 30,
-    "stop sign": 75,
-    "parking meter": 30,
-    "bench": 120,
-    "bird": 25,
-    "cat": 30,
-    "dog": 50,
-    "horse": 150,
-    "sheep": 100,
-    "cow": 150,
-    "elephant": 350,
-    "bear": 200,
-    "zebra": 140,
-    "giraffe": 180,
-    "backpack": 35,
-    "umbrella": 100,
-    "handbag": 30,
-    "tie": 10,
-    "suitcase": 45,
-    "frisbee": 25,
-    "skis": 180,
-    "snowboard": 160,
-    "sports ball": 22,
-    "kite": 60,
-    "baseball bat": 7,
-    "baseball glove": 25,
-    "skateboard": 20,
-    "surfboard": 50,
-    "tennis racket": 27,
-    "bottle": 7,
-    "wine glass": 8,
-    "cup": 8,
-    "fork": 3,
-    "knife": 3,
-    "spoon": 3,
-    "bowl": 20,
-    "banana": 4,
-    "apple": 8,
-    "sandwich": 12,
-    "orange": 8,
-    "broccoli": 12,
-    "carrot": 4,
-    "hot dog": 5,
-    "pizza": 30,
-    "donut": 10,
-    "cake": 30,
-    "chair": 45,
-    "couch": 180,
-    "potted plant": 30,
-    "bed": 160,
-    "dining table": 150,
-    "toilet": 50,
-    "tv": 100,
-    "laptop": 30,
-    "mouse": 6,
-    "remote": 5,
-    "keyboard": 45,
-    "cell phone": 7,
-    "microwave": 50,
-    "oven": 60,
-    "toaster": 30,
-    "sink": 60,
-    "refrigerator": 70,
-    "book": 15,
-    "clock": 25,
-    "vase": 20,
-    "scissors": 8,
-    "teddy bear": 30,
-    "hair drier": 15,
-    "toothbrush": 2
-}
-
-
-def approx_distance(px, label):
-    if px < 10:
-        return -1
-    w = KNOWN_WIDTHS.get(label.lower(), 20)
-    return min(max((w * FOCAL_LENGTH) / px, 10), 400)
-
-# Flask route for index page
+# =====================
+# ROUTES
+# =====================
 @app.route("/")
 def index():
-    return send_file("index.html")
+    return render_template("index.html")
 
+@app.route("/simplify", methods=["POST"])
+def simplify_api():
+    data = request.get_json() or {}
+    text = data.get("text", "")
+    return jsonify({
+        "simplified": simplify_text(text),
+        "highlighted": highlight_difficult_words(text)
+    })
 
-last_dist = {}
-last_time = {}
-MIN_INTERVAL = 3.0
-
+# =====================
+# WEBSOCKET – AUTO SPEAK
+# =====================
 @sock.route("/ws")
 def ws_handler(ws):
+    print("✅ WS connected")
+
+    last_infer = 0
+    last_spoken = {}   # label -> timestamp
+    SPEAK_COOLDOWN = 4  # seconds
+
     while True:
         data = ws.receive()
         if data is None:
             break
 
         try:
-            frame_bytes = base64.b64decode(data)
-            frame_array = np.frombuffer(frame_bytes, np.uint8)
-            frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+            frame = cv2.imdecode(
+                np.frombuffer(base64.b64decode(data), np.uint8),
+                cv2.IMREAD_COLOR
+            )
         except:
             continue
 
         if frame is None:
             continue
 
-        h, w, _ = frame.shape
+        if time.time() - last_infer < 0.2:
+            continue
+        last_infer = time.time()
+
+        results = model(frame, conf=0.4, verbose=False)
+
+        h, w = frame.shape[:2]
         center = w // 2
 
-        results = model(frame, conf=0.35, verbose=False)
-# Processing detections and estimating distances
         for r in results:
             for box in r.boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                label = model.names[int(box.cls[0])]
+                try:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cls = int(box.cls[0])
+                    label = model.names[cls]
 
-                width_px = x2 - x1
-                dist = approx_distance(width_px, label)
-                if dist == -1 or dist > 250:
+                    direction = (
+                        "left" if x2 < center else
+                        "right" if x1 > center else
+                        "ahead"
+                    )
+
+                    speak_text = f"{label} {direction}"
+
+                    # ---- SMART SPEAK ----
+                    now = time.time()
+                    if label not in last_spoken or now - last_spoken[label] > SPEAK_COOLDOWN:
+                        try:
+                            tts_q.put_nowait(speak_text)
+                            last_spoken[label] = now
+                        except queue.Full:
+                            pass
+
+                    # UI overlay
+                    cv2.rectangle(frame, (x1,y1), (x2,y2), (0,255,255), 2)
+                    cv2.putText(
+                        frame, speak_text,
+                        (x1, max(20,y1-10)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6, (255,255,0), 2
+                    )
+                except:
                     continue
 
-                if x2 < center:
-                    direction = "left"
-                elif x1 > center:
-                    direction = "right"
-                else:
-                    direction = "ahead"
+        _, jpg = cv2.imencode(".jpg", frame)
+        ws.send(base64.b64encode(jpg).decode())
 
-                key = f"{label}_{x1//100}"
-                now = time.time()
-
-                if (key not in last_dist or abs(dist - last_dist[key]) > 15) and \
-                   now - last_time.get(key, 0) > MIN_INTERVAL:
-
-                    if not tts_queue.full():
-                        tts_queue.put(f"{label} {direction}, {int(dist)} centimeters")
-
-                    last_dist[key] = dist
-                    last_time[key] = now
-
-                cv2.rectangle(frame, (x1,y1), (x2,y2), (0,255,0), 2)
-                cv2.putText(
-                    frame,
-                    f"{label} {direction} {int(dist)}cm",
-                    (x1, y1-8),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0,255,255),
-                    2
-                )
-
-        _, buf = cv2.imencode(".jpg", frame)
-        ws.send(base64.b64encode(buf).decode())
-# Running the Flask app and Estalishing the ports
+# =====================
+# RUN
+# =====================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8001, debug=False)
+    app.run(
+        host="0.0.0.0",
+        port=8001,
+        threaded=True,
+        debug=False,
+        use_reloader=False
+    )

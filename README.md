@@ -1,4 +1,4 @@
-#VIDAS
+# VIDAS
 ## Description
 The B2 Bombers are making VIDAS Visualy imapaired and dyslexic assistance simulator.We are doing an AI powered accessibilltiy website thta suports visually impared and dyslexic users through object detction,navigation assistance,dyslexic freindly reading tools,customizable fonts,background filters, and text to speech-making reading and naviagtion easier for everyone.
 Features
@@ -10,11 +10,14 @@ By integrating YOLO-based object detection with Groq-powered AI inference, VIAS 
 ## Features of VIDAS
 - Object detection
 - Navigation assistance
-- Implementation of AI- Add yolo txt feed to groq
-- Bengaluru Initiative for Navigation
 - Dyslexic Assistance
+- Text-to-Speech
 
 ### Our Moto
 > From live vision to actionable guidance — powered by real-time AI.
 
-### Used AI for Dimensions
+### AI usage
+- RegEx Module in python
+- queue module and threading module in python along with flask and flasksock
+- Javascript requests in code
+
