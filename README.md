@@ -18,6 +18,6 @@ By integrating YOLO-based object detection with Groq-powered AI inference, VIDAS
 
 ### AI usage
 - RegEx Module in python
-- queue module and threading module in python along with flask and flasksock
+- Queue module and threading module in python along with flask and flasksock
 - Javascript requests in code
 
